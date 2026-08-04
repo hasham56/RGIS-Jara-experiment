@@ -8,8 +8,9 @@ class AppConstants {
   static const String modelAssetPath = 'assets/models/model.onnx';
   static const String labelsAssetPath = 'assets/models/labels.txt';
 
-  /// Square input side the model was exported with (`yolo export imgsz=640`).
-  static const int modelInputSize = 640;
+  /// Square input side the bundled model was exported with
+  /// (`yolo export imgsz=960` — model.onnx declares `[1, 3, 960, 960]`).
+  static const int modelInputSize = 960;
 
   static const double defaultConfidenceThreshold = 0.5;
   static const double defaultIouThreshold = 0.45;

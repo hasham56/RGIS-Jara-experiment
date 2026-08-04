@@ -19,7 +19,7 @@ import 'detection_engine.dart';
 /// standard x86_64 Android emulator, not just physical ARM devices.
 ///
 /// Expects a stock Ultralytics export (`yolo export model=... format=onnx
-/// imgsz=640`, i.e. *without* `nms=True`): output tensor shape
+/// imgsz=960`, i.e. *without* `nms=True`): output tensor shape
 /// `[1, 4 + numClasses, numBoxes]`, box coordinates as `cx, cy, w, h` in
 /// model-input pixel space, followed by one raw class-score row per class
 /// (no separate objectness row — that's the YOLOv8/YOLO11 head layout).
@@ -67,18 +67,23 @@ class OnnxDetectionEngine implements DetectionEngine {
 
   /// Reads the declared shape of the model's first input (NCHW: `[batch,
   /// channels, height, width]`) and returns its height, assuming a square
-  /// input as Ultralytics exports by default.
+  /// input as Ultralytics exports by default. Any quirk in the plugin's
+  /// shape reporting falls back to [AppConstants.modelInputSize].
   Future<int> _detectInputSize(OrtSession session) async {
-    final inputInfo = await session.getInputInfo();
-    if (inputInfo.isEmpty) return AppConstants.modelInputSize;
+    try {
+      final inputInfo = await session.getInputInfo();
+      if (inputInfo.isEmpty) return AppConstants.modelInputSize;
 
-    final shape = (inputInfo.first['shape'] as List?)
-        ?.map((d) => (d as num).toInt())
-        .toList();
-    if (shape == null || shape.length != 4) return AppConstants.modelInputSize;
+      final shape = (inputInfo.first['shape'] as List?)
+          ?.map((d) => d is num ? d.toInt() : int.tryParse('$d') ?? -1)
+          .toList();
+      if (shape == null || shape.length != 4) return AppConstants.modelInputSize;
 
-    final height = shape[2];
-    return height > 0 ? height : AppConstants.modelInputSize;
+      final height = shape[2];
+      return height > 0 ? height : AppConstants.modelInputSize;
+    } catch (_) {
+      return AppConstants.modelInputSize;
+    }
   }
 
   @override
