@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/router/app_router.dart';
 import '../../../gallery/presentation/providers/gallery_providers.dart';
+import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/entities/detection_result.dart';
 import '../providers/detection_providers.dart';
 import '../providers/detection_state_provider.dart';
@@ -229,6 +230,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
 
   Widget _buildReview(DetectionUiState state) {
     final frame = state.frame;
+    final settings = ref.watch(settingsNotifierProvider);
     return Column(
       children: [
         Expanded(
@@ -244,7 +246,14 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
                   children: [
                     Image.memory(state.imageBytes!, fit: BoxFit.contain),
                     if (frame != null)
-                      CustomPaint(painter: DetectionOverlayPainter(frame: frame)),
+                      CustomPaint(
+                        painter: DetectionOverlayPainter(
+                          frame: frame,
+                          showLabels: settings.showLabels,
+                          minimizeLabels: settings.minimizeLabels,
+                          showConfidence: settings.showConfidence,
+                        ),
+                      ),
                   ],
                 ),
               ),

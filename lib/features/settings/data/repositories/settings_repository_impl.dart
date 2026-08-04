@@ -15,6 +15,13 @@ class SettingsRepositoryImpl implements SettingsRepository {
           AppSettings.defaults.confidenceThreshold,
       iouThreshold:
           _datasource.getIouThreshold() ?? AppSettings.defaults.iouThreshold,
+      showLabels: _datasource.getShowLabels() ?? AppSettings.defaults.showLabels,
+      minimizeLabels:
+          _datasource.getMinimizeLabels() ??
+          AppSettings.defaults.minimizeLabels,
+      showConfidence:
+          _datasource.getShowConfidence() ??
+          AppSettings.defaults.showConfidence,
     );
   }
 
@@ -22,5 +29,8 @@ class SettingsRepositoryImpl implements SettingsRepository {
   Future<void> save(AppSettings settings) async {
     await _datasource.setConfidenceThreshold(settings.confidenceThreshold);
     await _datasource.setIouThreshold(settings.iouThreshold);
+    await _datasource.setShowLabels(settings.showLabels);
+    await _datasource.setMinimizeLabels(settings.minimizeLabels);
+    await _datasource.setShowConfidence(settings.showConfidence);
   }
 }

@@ -8,9 +8,23 @@ import '../../domain/entities/detection_result.dart';
 /// which wraps this in an `AspectRatio` matching the photo) so a single
 /// uniform scale factor maps detection-space boxes to canvas pixels.
 class DetectionOverlayPainter extends CustomPainter {
-  DetectionOverlayPainter({required this.frame});
+  DetectionOverlayPainter({
+    required this.frame,
+    this.showLabels = true,
+    this.minimizeLabels = false,
+    this.showConfidence = true,
+  });
 
   final DetectionFrame frame;
+
+  /// Whether class names are drawn on each box (from Settings).
+  final bool showLabels;
+
+  /// Collapse class names to their first letter (`price_label` -> `p`).
+  final bool minimizeLabels;
+
+  /// Whether the confidence percentage is drawn on each box (from Settings).
+  final bool showConfidence;
 
   static const Color _boxColor = Color(0xFF00E676);
 
@@ -37,8 +51,9 @@ class DetectionOverlayPainter extends CustomPainter {
       );
       canvas.drawRect(rect, boxPaint);
 
-      final labelText =
-          '${detection.label} ${(detection.confidence * 100).toStringAsFixed(0)}%';
+      final labelText = _labelText(detection);
+      if (labelText.isEmpty) continue;
+
       final textPainter = TextPainter(
         text: TextSpan(
           text: labelText,
@@ -66,8 +81,23 @@ class DetectionOverlayPainter extends CustomPainter {
     }
   }
 
+  String _labelText(Detection detection) {
+    final parts = <String>[
+      if (showLabels)
+        minimizeLabels && detection.label.isNotEmpty
+            ? detection.label[0]
+            : detection.label,
+      if (showConfidence)
+        '${(detection.confidence * 100).toStringAsFixed(0)}%',
+    ];
+    return parts.join(' ');
+  }
+
   @override
   bool shouldRepaint(covariant DetectionOverlayPainter oldDelegate) {
-    return oldDelegate.frame != frame;
+    return oldDelegate.frame != frame ||
+        oldDelegate.showLabels != showLabels ||
+        oldDelegate.minimizeLabels != minimizeLabels ||
+        oldDelegate.showConfidence != showConfidence;
   }
 }

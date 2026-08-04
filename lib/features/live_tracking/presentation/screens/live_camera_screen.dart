@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../detection/presentation/providers/detection_providers.dart';
 import '../../../gallery/presentation/providers/gallery_providers.dart';
+import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/entities/session_summary.dart';
 import '../providers/live_tracking_state_provider.dart';
 import '../widgets/live_hud.dart';
@@ -295,6 +296,8 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
   }
 
   Widget _buildBody(LiveUiState liveState) {
+    final settings = ref.watch(settingsNotifierProvider);
+
     if (_permissionError != null) {
       return Center(
         child: Padding(
@@ -361,6 +364,9 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
                                 trackedLabels: result.trackedLabels,
                                 frameWidth: result.frameWidth,
                                 frameHeight: result.frameHeight,
+                                showLabels: settings.showLabels,
+                                minimizeLabels: settings.minimizeLabels,
+                                showConfidence: settings.showConfidence,
                               ),
                             ),
                         ],

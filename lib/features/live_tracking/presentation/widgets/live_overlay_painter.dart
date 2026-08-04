@@ -17,11 +17,23 @@ class LiveOverlayPainter extends CustomPainter {
     required this.trackedLabels,
     required this.frameWidth,
     required this.frameHeight,
+    this.showLabels = true,
+    this.minimizeLabels = false,
+    this.showConfidence = true,
   });
 
   final List<TrackedLabel> trackedLabels;
   final int frameWidth;
   final int frameHeight;
+
+  /// Whether class names are drawn on each box (from Settings).
+  final bool showLabels;
+
+  /// Collapse class names to their first letter (`price_label` -> `p`).
+  final bool minimizeLabels;
+
+  /// Whether the confidence percentage is drawn on each box (from Settings).
+  final bool showConfidence;
 
   static const Color _boxColor = Color(0xFF00E676);
 
@@ -47,9 +59,9 @@ class LiveOverlayPainter extends CustomPainter {
       );
       canvas.drawRect(rect, boxPaint);
 
-      final labelText =
-          'id:${tracked.displayId} ${tracked.label} '
-          '${(tracked.confidence * 100).toStringAsFixed(0)}%';
+      final labelText = _labelText(tracked);
+      if (labelText.isEmpty) continue;
+
       final textPainter = TextPainter(
         text: TextSpan(
           text: labelText,
@@ -77,8 +89,24 @@ class LiveOverlayPainter extends CustomPainter {
     }
   }
 
+  String _labelText(TrackedLabel tracked) {
+    final parts = <String>[
+      'id:${tracked.displayId}',
+      if (showLabels)
+        minimizeLabels && tracked.label.isNotEmpty
+            ? tracked.label[0]
+            : tracked.label,
+      if (showConfidence)
+        '${(tracked.confidence * 100).toStringAsFixed(0)}%',
+    ];
+    return parts.join(' ');
+  }
+
   @override
   bool shouldRepaint(covariant LiveOverlayPainter oldDelegate) {
-    return oldDelegate.trackedLabels != trackedLabels;
+    return oldDelegate.trackedLabels != trackedLabels ||
+        oldDelegate.showLabels != showLabels ||
+        oldDelegate.minimizeLabels != minimizeLabels ||
+        oldDelegate.showConfidence != showConfidence;
   }
 }

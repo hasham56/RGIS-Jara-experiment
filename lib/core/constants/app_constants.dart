@@ -20,4 +20,7 @@ class AppConstants {
 
   static const String prefsConfidenceKey = 'settings.confidenceThreshold';
   static const String prefsIouKey = 'settings.iouThreshold';
+  static const String prefsShowLabelsKey = 'settings.showLabels';
+  static const String prefsMinimizeLabelsKey = 'settings.minimizeLabels';
+  static const String prefsShowConfidenceKey = 'settings.showConfidence';
 }

@@ -30,6 +30,21 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(iouThreshold: value);
     await _repository.save(state);
   }
+
+  Future<void> setShowLabels(bool value) async {
+    state = state.copyWith(showLabels: value);
+    await _repository.save(state);
+  }
+
+  Future<void> setMinimizeLabels(bool value) async {
+    state = state.copyWith(minimizeLabels: value);
+    await _repository.save(state);
+  }
+
+  Future<void> setShowConfidence(bool value) async {
+    state = state.copyWith(showConfidence: value);
+    await _repository.save(state);
+  }
 }
 
 final settingsNotifierProvider =

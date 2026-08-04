@@ -49,6 +49,30 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
           Text(
+            'Box annotations',
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Enable labels'),
+            value: settings.showLabels,
+            onChanged: notifier.setShowLabels,
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Minimize labels'),
+            subtitle: const Text('Show just the first letter (price_label → p)'),
+            value: settings.minimizeLabels,
+            onChanged: settings.showLabels ? notifier.setMinimizeLabels : null,
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Enable confidence'),
+            value: settings.showConfidence,
+            onChanged: notifier.setShowConfidence,
+          ),
+          const SizedBox(height: 24),
+          Text(
             'Lower the confidence threshold to catch more distant or partially '
             'occluded price labels, at the cost of a few extra false '
             'positives. Lower the IoU threshold to suppress overlapping boxes '
