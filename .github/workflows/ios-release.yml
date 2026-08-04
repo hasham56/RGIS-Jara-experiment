@@ -3,7 +3,7 @@ name: Build iOS Release IPA
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   build:
