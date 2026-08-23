@@ -14,7 +14,7 @@ class App extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
-      initialRoute: AppRoutes.camera,
+      initialRoute: AppRoutes.ticketForm,
       onGenerateRoute: AppRouter.onGenerateRoute,
     );
   }

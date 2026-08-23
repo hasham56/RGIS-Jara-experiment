@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 import 'features/detection/presentation/screens/camera_screen.dart';
 import 'features/live_tracking/presentation/screens/live_camera_screen.dart';
 
+/// TEMPORARILY UNUSED — the Live feature is switched off, so `AppRoutes.camera`
+/// routes straight to [CameraScreen] instead of to this shell. Nothing
+/// references this file at the moment; it is kept intact so restoring the Live
+/// tab is a two-line change in `app_router.dart`.
+///
 /// Bottom tab switcher between the capture-based detection flow
 /// ([CameraScreen], unchanged) and the new live camera tracking flow
 /// ([LiveCameraScreen]).

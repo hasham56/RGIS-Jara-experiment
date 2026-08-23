@@ -91,15 +91,27 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState appState) {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (appState == AppLifecycleState.inactive ||
-        appState == AppLifecycleState.paused) {
+    // `inactive` fires for transient iOS interruptions (Control Centre, a
+    // banner, the app switcher) — tearing the camera down for those killed
+    // the preview for a momentary glance, so only a real background does.
+    if (appState == AppLifecycleState.paused ||
+        appState == AppLifecycleState.hidden ||
+        appState == AppLifecycleState.detached) {
+      final controller = _controller;
+      if (controller == null) return;
       _endSessionIfRunning();
-      controller.dispose();
       _controller = null;
+      // Rebuild before disposing so CameraPreview releases its reference.
+      if (mounted) setState(() {});
+      controller.dispose();
     } else if (appState == AppLifecycleState.resumed) {
-      setState(() => _initializeFuture = _initCamera());
+      // Re-acquire when there is no controller. This used to guard on
+      // `_controller != null` at the top of the method while the teardown
+      // branch nulled it, so this path was unreachable and the camera stayed
+      // dead until the app was force-quit.
+      if (_controller == null) {
+        setState(() => _initializeFuture = _initCamera());
+      }
     }
   }
 

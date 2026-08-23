@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/constants/app_constants.dart';
 import '../../data/datasources/model_asset_datasource.dart';
 import '../../data/engines/detection_engine.dart';
 import '../../data/engines/onnx_detection_engine.dart';
@@ -30,9 +31,17 @@ final runDetectionUseCaseProvider = Provider<RunDetectionUseCase>((ref) {
   return RunDetectionUseCase(ref.watch(detectionRepositoryProvider));
 });
 
-/// Loads the model once. The UI watches this to gate the camera screen on
-/// readiness and surface load errors (e.g. missing asset files).
-final modelLoaderProvider = FutureProvider<void>((ref) async {
+/// Loads the model once and resolves to its class names. The UI watches this
+/// to gate the camera screen on readiness and surface load errors (e.g.
+/// missing asset files).
+///
+/// Returning the labels (rather than `void`) means the post-capture count
+/// editor can seed one row per class synchronously — by the time a capture is
+/// possible this provider has necessarily resolved. Falls back to
+/// [AppConstants.fallbackClassNames] only if `labels.txt` yields nothing.
+final modelLoaderProvider = FutureProvider<List<String>>((ref) async {
   final repository = ref.watch(detectionRepositoryProvider);
   await repository.loadModel();
+  final labels = await ref.watch(modelAssetDatasourceProvider).loadLabels();
+  return labels.isEmpty ? AppConstants.fallbackClassNames : labels;
 });

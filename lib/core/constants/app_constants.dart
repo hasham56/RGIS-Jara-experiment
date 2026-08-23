@@ -15,6 +15,22 @@ class AppConstants {
   static const double defaultConfidenceThreshold = 0.5;
   static const double defaultIouThreshold = 0.45;
 
+  /// Class names used only if `labels.txt` cannot be read. `labels.txt`
+  /// remains the source of truth — this exists so the count editor can still
+  /// render its rows if the asset load fails. Order must match training
+  /// (index == classId).
+  static const List<String> fallbackClassNames = <String>[
+    'small',
+    'medium',
+    'large',
+    'price_label',
+  ];
+
+  /// How long to let one-shot autofocus converge before firing the shutter.
+  /// The capture path triggers AF, waits this long, then takes the picture —
+  /// without it the photo is taken mid-hunt and comes out soft.
+  static const Duration autofocusSettleDelay = Duration(milliseconds: 450);
+
   static const String capturesDirName = 'captures';
   static const String capturesIndexFileName = 'captures_index.json';
 
