@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -34,13 +35,30 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
   /// would leave one orphaned controller holding the device.
   bool _initializing = false;
 
-  /// Guards the capture path, which now spans an autofocus settle delay
-  /// before the shutter — `isTakingPicture` does not cover that window.
+  /// Guards the capture path, which spans an autofocus settle delay before
+  /// the shutter — `isTakingPicture` does not cover that window.
   bool _capturing = false;
+
+  /// True while the Send placeholder is running.
+  bool _sending = false;
+
+  /// Every back-facing camera the platform exposes. On a multi-lens iPhone
+  /// this is how the ultra-wide (which focuses far closer than the standard
+  /// wide lens) becomes reachable. Some platform/plugin combinations only
+  /// report a single back camera, in which case the picker stays hidden.
+  List<CameraDescription> _backCameras = const <CameraDescription>[];
+  int _lensIndex = 0;
+
+  double _zoom = 1.0;
+  double _minZoom = 1.0;
+  double _maxZoom = 1.0;
 
   /// Where the user last tapped to focus, in normalised (0..1) preview
   /// coordinates. Re-applied just before the shutter fires.
   Offset? _focusPoint;
+
+  /// Pan/zoom state for inspecting a reviewed capture.
+  final TransformationController _reviewZoom = TransformationController();
 
   final GlobalKey _captureBoundaryKey = GlobalKey();
 
@@ -78,22 +96,26 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         setState(() => _cameraError = 'No camera available on this device.');
         return;
       }
-      final rearCamera = cameras.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => cameras.first,
-      );
 
-      // Release anything still held before acquiring again (Retry path).
+      final backCameras = cameras
+          .where((c) => c.lensDirection == CameraLensDirection.back)
+          .toList();
+      _backCameras = backCameras.isEmpty ? cameras : backCameras;
+      if (_lensIndex >= _backCameras.length) _lensIndex = 0;
+
+      // Release anything still held before acquiring again (Retry / lens
+      // switch paths). Rebuild as part of clearing it so no frame can paint a
+      // CameraPreview over a controller that is being torn down.
       final previous = _controller;
       if (previous != null) {
-        _controller = null;
+        setState(() => _controller = null);
         unawaited(previous.dispose());
       }
 
       // veryHigh (1920x1080) rather than high (1280x720): the detector runs at
       // 960px, so a 720p still leaves it starved of detail on small labels.
       final controller = CameraController(
-        rearCamera,
+        _backCameras[_lensIndex],
         ResolutionPreset.veryHigh,
         enableAudio: false,
       );
@@ -103,6 +125,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         return;
       }
       await _applyFocusDefaults(controller);
+      await _readZoomRange(controller);
       if (!mounted) {
         await controller.dispose();
         return;
@@ -142,6 +165,57 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
       // Focus/exposure control is unavailable on some devices; that must not
       // take down an otherwise working preview.
     }
+  }
+
+  Future<void> _readZoomRange(CameraController controller) async {
+    try {
+      final min = await controller.getMinZoomLevel();
+      final max = await controller.getMaxZoomLevel();
+      // Devices can report very large digital-zoom maxima; past a few x the
+      // image is too degraded to detect anything, so cap what we offer.
+      _minZoom = min;
+      _maxZoom = math.min(max, AppConstants.previewMaxZoom);
+      _zoom = _minZoom;
+      await controller.setZoomLevel(_minZoom);
+    } on CameraException {
+      _minZoom = 1.0;
+      _maxZoom = 1.0;
+      _zoom = 1.0;
+    }
+  }
+
+  Future<void> _setZoom(double value) async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    setState(() => _zoom = value);
+    try {
+      await controller.setZoomLevel(value);
+    } on CameraException {
+      // Out-of-range on some devices; the slider is already clamped.
+    }
+  }
+
+  /// Switches to another physical back camera. On iPhones the ultra-wide is
+  /// the one that focuses close enough for a label held near the lens.
+  Future<void> _switchLens(int index) async {
+    if (index == _lensIndex || _initializing) return;
+    setState(() {
+      _lensIndex = index;
+      _focusPoint = null;
+    });
+    setState(() => _initializeFuture = _initCamera());
+  }
+
+  /// Best-effort friendly name. `CameraDescription` carries no lens-type
+  /// field, so this reads the platform's device name where it is descriptive
+  /// and falls back to a positional label where it is not.
+  String _lensLabel(int index) {
+    final name = _backCameras[index].name.toLowerCase();
+    if (name.contains('ultra')) return 'Ultra-wide';
+    if (name.contains('tele')) return 'Tele';
+    if (name.contains('dual') || name.contains('triple')) return 'Auto';
+    if (name.contains('wide')) return 'Wide';
+    return 'Lens ${index + 1}';
   }
 
   Future<void> _focusAt(Offset localPosition, Size previewSize) async {
@@ -201,6 +275,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _reviewZoom.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -233,6 +308,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
       final file = await controller.takePicture();
       final bytes = await file.readAsBytes();
       if (!mounted) return;
+      _reviewZoom.value = Matrix4.identity();
       await ref.read(detectionStateProvider.notifier).processCapture(bytes);
     } on CameraException catch (e) {
       if (!mounted) return;
@@ -244,13 +320,26 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
     }
   }
 
-  /// Placeholder for the upload flow — deliberately does nothing for now.
+  void _retake() {
+    _reviewZoom.value = Matrix4.identity();
+    ref.read(detectionStateProvider.notifier).reset();
+  }
+
+  /// Placeholder for the upload flow: shows a progress state, then returns to
+  /// the camera. Nothing is transmitted yet.
   ///
   /// When implemented this will post the ticket number (`ticketProvider`),
   /// the user-corrected counts (`DetectionUiState.countsPayload`) and the
   /// annotated capture, which can be rasterised from [_captureBoundaryKey].
-  void _send(DetectionFrame frame) {
-    // TODO(rgis): wire up the real send.
+  Future<void> _send(DetectionFrame frame) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    // TODO(rgis): replace this delay with the real upload.
+    await Future<void>.delayed(AppConstants.sendSimulationDelay);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    _reviewZoom.value = Matrix4.identity();
+    ref.read(detectionStateProvider.notifier).reset();
   }
 
   @override
@@ -352,15 +441,87 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
                 ),
               ),
             ),
+            if (_backCameras.length > 1)
+              Positioned(
+                top: 12,
+                left: 0,
+                right: 0,
+                child: SafeArea(bottom: false, child: _buildLensPicker()),
+              ),
             Positioned(
               bottom: 24,
               left: 0,
               right: 0,
-              child: Center(child: CaptureButton(onPressed: _capture)),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_maxZoom > _minZoom) _buildZoomSlider(),
+                    const SizedBox(height: 12),
+                    CaptureButton(onPressed: _capture),
+                  ],
+                ),
+              ),
             ),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildLensPicker() {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < _backCameras.length; i++)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: ChoiceChip(
+                  label: Text(_lensLabel(i)),
+                  selected: i == _lensIndex,
+                  onSelected: (_) => _switchLens(i),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildZoomSlider() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Row(
+        children: [
+          const Icon(Icons.zoom_out, color: Colors.white, size: 20),
+          Expanded(
+            child: Slider(
+              value: _zoom.clamp(_minZoom, _maxZoom).toDouble(),
+              min: _minZoom,
+              max: _maxZoom,
+              onChanged: _setZoom,
+            ),
+          ),
+          const Icon(Icons.zoom_in, color: Colors.white, size: 20),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 44,
+            child: Text(
+              '${_zoom.toStringAsFixed(1)}x',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -374,80 +535,135 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         .clamp(140.0, 340.0)
         .toDouble();
 
-    return Column(
+    return Stack(
       children: [
-        Expanded(
-          child: Center(
-            child: AspectRatio(
-              aspectRatio: (frame != null && frame.imageHeight > 0)
-                  ? frame.imageWidth / frame.imageHeight
-                  : 1,
-              child: RepaintBoundary(
-                key: _captureBoundaryKey,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Image.memory(state.imageBytes!, fit: BoxFit.contain),
-                    if (frame != null)
-                      CustomPaint(
-                        painter: DetectionOverlayPainter(
-                          frame: frame,
-                          showLabels: settings.showLabels,
-                          minimizeLabels: settings.minimizeLabels,
-                          showConfidence: settings.showConfidence,
+        Column(
+          children: [
+            Expanded(
+              child: Center(
+                child: AspectRatio(
+                  aspectRatio: (frame != null && frame.imageHeight > 0)
+                      ? frame.imageWidth / frame.imageHeight
+                      : 1,
+                  // Pinch to zoom, drag to pan, double-tap to reset. The
+                  // boxes are inside the same subtree as the photo, so they
+                  // scale with it; the RepaintBoundary sits below the
+                  // transform, so a future Send still rasterises the
+                  // canonical unzoomed frame.
+                  child: GestureDetector(
+                    onDoubleTap: () =>
+                        _reviewZoom.value = Matrix4.identity(),
+                    child: InteractiveViewer(
+                      transformationController: _reviewZoom,
+                      minScale: 1.0,
+                      maxScale: AppConstants.reviewMaxZoom,
+                      child: RepaintBoundary(
+                        key: _captureBoundaryKey,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.memory(
+                              state.imageBytes!,
+                              fit: BoxFit.contain,
+                              // Keep detail crisp when magnified rather than
+                              // smoothing the label text away.
+                              filterQuality: FilterQuality.medium,
+                            ),
+                            if (frame != null)
+                              CustomPaint(
+                                painter: DetectionOverlayPainter(
+                                  frame: frame,
+                                  showLabels: settings.showLabels,
+                                  minimizeLabels: settings.minimizeLabels,
+                                  showConfidence: settings.showConfidence,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            if (state.isProcessing) const LinearProgressIndicator(),
+            if (state.labelCounts.isNotEmpty)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: panelMaxHeight),
+                child: LabelCountsPanel(
+                  labelCounts: state.labelCounts,
+                  total: state.editedTotal,
+                  edited: state.countsEdited,
+                  frame: frame,
+                  onIncrement: notifier.increment,
+                  onDecrement: notifier.decrement,
+                ),
+              ),
+            if (state.error != null)
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Text(
+                  state.error!,
+                  style: const TextStyle(color: Colors.red),
+                ),
+              ),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _sending ? null : _retake,
+                        child: const Text('Retake'),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: (frame == null || _sending)
+                            ? null
+                            : () => _send(frame),
+                        child: const Text('Send'),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
-          ),
+          ],
         ),
-        if (state.isProcessing) const LinearProgressIndicator(),
-        if (state.labelCounts.isNotEmpty)
-          ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: panelMaxHeight),
-            child: LabelCountsPanel(
-              labelCounts: state.labelCounts,
-              total: state.editedTotal,
-              edited: state.countsEdited,
-              frame: frame,
-              onIncrement: notifier.increment,
-              onDecrement: notifier.decrement,
-            ),
-          ),
-        if (state.error != null)
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text(
-              state.error!,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
-        SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: notifier.reset,
-                    child: const Text('Retake'),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: frame == null ? null : () => _send(frame),
-                    child: const Text('Send'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        if (_sending)
+          const Positioned.fill(child: _SendingOverlay()),
       ],
+    );
+  }
+}
+
+/// Blocking progress state shown while Send runs.
+class _SendingOverlay extends StatelessWidget {
+  const _SendingOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.black54,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(color: Colors.white),
+            const SizedBox(height: 16),
+            Text(
+              'Sending…',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

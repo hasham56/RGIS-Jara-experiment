@@ -31,6 +31,18 @@ class AppConstants {
   /// without it the photo is taken mid-hunt and comes out soft.
   static const Duration autofocusSettleDelay = Duration(milliseconds: 450);
 
+  /// How long the Send button shows its progress state before returning to
+  /// the camera. Stands in for the real upload, which is not wired up yet.
+  static const Duration sendSimulationDelay = Duration(milliseconds: 1500);
+
+  /// Upper bound for pinch-zoom on a reviewed capture. Enough to inspect a
+  /// single shelf label and read which category it was boxed as.
+  static const double reviewMaxZoom = 8.0;
+
+  /// Ceiling for the live preview's zoom slider. Devices can report much
+  /// higher (digital) maxima that are useless for label detection.
+  static const double previewMaxZoom = 8.0;
+
   static const String capturesDirName = 'captures';
   static const String capturesIndexFileName = 'captures_index.json';
 
