@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/label_colors.dart';
 import '../../domain/entities/tracked_label.dart';
 
 /// Draws tracked boxes, display id, class name, and confidence over the
@@ -35,8 +36,6 @@ class LiveOverlayPainter extends CustomPainter {
   /// Whether the confidence percentage is drawn on each box (from Settings).
   final bool showConfidence;
 
-  static const Color _boxColor = Color(0xFF00E676);
-
   @override
   void paint(Canvas canvas, Size size) {
     if (frameWidth == 0 || frameHeight == 0) return;
@@ -45,12 +44,16 @@ class LiveOverlayPainter extends CustomPainter {
     final scaleY = size.height / frameHeight;
 
     final boxPaint = Paint()
-      ..color = _boxColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5;
-    final labelBgPaint = Paint()..color = _boxColor;
+    final labelBgPaint = Paint();
 
     for (final tracked in trackedLabels) {
+      // Colour by class, matching the capture overlay and video annotator.
+      final color = LabelColors.forClassId(tracked.classId);
+      boxPaint.color = color;
+      labelBgPaint.color = color;
+
       final rect = Rect.fromLTRB(
         tracked.box.left * scaleX,
         tracked.box.top * scaleY,

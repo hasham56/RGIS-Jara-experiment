@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/label_colors.dart';
 import '../../domain/entities/label_count.dart';
 
 /// One `Small  [-] 12 [+]` row in the post-capture count editor.
@@ -24,6 +25,17 @@ class LabelCounterRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
+          // Matches the box colour for this class on the photo above.
+          Container(
+            width: 14,
+            height: 14,
+            decoration: BoxDecoration(
+              color: LabelColors.forClassId(labelCount.classId),
+              borderRadius: BorderRadius.circular(3),
+              border: Border.all(color: theme.dividerColor),
+            ),
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               labelCount.displayName,

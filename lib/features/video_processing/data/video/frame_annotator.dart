@@ -1,12 +1,21 @@
 import 'package:image/image.dart' as img;
 
+import '../../../../core/theme/label_colors.dart';
 import '../../../live_tracking/data/tracking/box_smoother.dart';
 
-/// Green used for detection boxes throughout the app's live overlay, kept
-/// consistent here even though this path draws with `package:image`
-/// primitives instead of a Flutter `Canvas`.
-final _boxColor = img.ColorRgb8(0, 230, 118);
 final _labelTextColor = img.ColorRgb8(0, 0, 0);
+
+/// Per-class box colours, matching the on-screen overlay so an exported video
+/// is colour-coded the same way as a live capture. Cached because this runs
+/// once per box per frame across a whole clip.
+final _boxColorCache = <int, img.ColorRgb8>{};
+
+img.ColorRgb8 _boxColorFor(int classId) {
+  return _boxColorCache.putIfAbsent(classId, () {
+    final rgb = LabelColors.rgbForClassId(classId);
+    return img.ColorRgb8(rgb[0], rgb[1], rgb[2]);
+  });
+}
 
 /// Burns each [DrawableTrack] onto [frame] in place (mutates and returns
 /// it, mirroring `package:image`'s own drawing functions) — a box outline
@@ -28,7 +37,8 @@ img.Image annotateFrame({
     final y1 = d.box.top.round().clamp(0, frame.height - 1);
     final x2 = d.box.right.round().clamp(0, frame.width - 1);
     final y2 = d.box.bottom.round().clamp(0, frame.height - 1);
-    img.drawRect(frame, x1: x1, y1: y1, x2: x2, y2: y2, color: _boxColor, thickness: 3);
+    final boxColor = _boxColorFor(d.classId);
+    img.drawRect(frame, x1: x1, y1: y1, x2: x2, y2: y2, color: boxColor, thickness: 3);
 
     final displayId = displayIds[d.canonicalId] ?? 0;
     final label = labelNames[d.classId] ?? 'class_${d.classId}';
@@ -40,7 +50,7 @@ img.Image annotateFrame({
       y1: labelTop,
       x2: (x1 + text.length * 9 + 6).clamp(0, frame.width - 1),
       y2: labelTop + 18,
-      color: _boxColor,
+      color: boxColor,
     );
     img.drawString(
       frame,

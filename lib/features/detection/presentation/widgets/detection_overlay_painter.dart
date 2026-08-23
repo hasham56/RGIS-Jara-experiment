@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/label_colors.dart';
 import '../../domain/entities/detection_result.dart';
 
 /// Draws bounding boxes, labels, and confidence percentages over a captured
@@ -26,8 +27,6 @@ class DetectionOverlayPainter extends CustomPainter {
   /// Whether the confidence percentage is drawn on each box (from Settings).
   final bool showConfidence;
 
-  static const Color _boxColor = Color(0xFF00E676);
-
   @override
   void paint(Canvas canvas, Size size) {
     if (frame.imageWidth == 0 || frame.imageHeight == 0) return;
@@ -36,13 +35,18 @@ class DetectionOverlayPainter extends CustomPainter {
     final scaleY = size.height / frame.imageHeight;
 
     final boxPaint = Paint()
-      ..color = _boxColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5;
 
-    final labelBgPaint = Paint()..color = _boxColor;
+    final labelBgPaint = Paint();
 
     for (final detection in frame.detections) {
+      // Colour by class so small/medium/large/price_label are separable at a
+      // glance on a dense shelf.
+      final color = LabelColors.forClassId(detection.classId);
+      boxPaint.color = color;
+      labelBgPaint.color = color;
+
       final rect = Rect.fromLTRB(
         detection.box.left * scaleX,
         detection.box.top * scaleY,

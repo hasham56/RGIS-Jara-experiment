@@ -42,13 +42,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
   /// True while the Send placeholder is running.
   bool _sending = false;
 
-  /// Every back-facing camera the platform exposes. On a multi-lens iPhone
-  /// this is how the ultra-wide (which focuses far closer than the standard
-  /// wide lens) becomes reachable. Some platform/plugin combinations only
-  /// report a single back camera, in which case the picker stays hidden.
-  List<CameraDescription> _backCameras = const <CameraDescription>[];
-  int _lensIndex = 0;
-
   double _zoom = 1.0;
   double _minZoom = 1.0;
   double _maxZoom = 1.0;
@@ -97,15 +90,14 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         return;
       }
 
-      final backCameras = cameras
-          .where((c) => c.lensDirection == CameraLensDirection.back)
-          .toList();
-      _backCameras = backCameras.isEmpty ? cameras : backCameras;
-      if (_lensIndex >= _backCameras.length) _lensIndex = 0;
+      final rearCamera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
 
-      // Release anything still held before acquiring again (Retry / lens
-      // switch paths). Rebuild as part of clearing it so no frame can paint a
-      // CameraPreview over a controller that is being torn down.
+      // Release anything still held before acquiring again (Retry path).
+      // Rebuild as part of clearing it so no frame can paint a CameraPreview
+      // over a controller that is being torn down.
       final previous = _controller;
       if (previous != null) {
         setState(() => _controller = null);
@@ -115,7 +107,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
       // veryHigh (1920x1080) rather than high (1280x720): the detector runs at
       // 960px, so a 720p still leaves it starved of detail on small labels.
       final controller = CameraController(
-        _backCameras[_lensIndex],
+        rearCamera,
         ResolutionPreset.veryHigh,
         enableAudio: false,
       );
@@ -193,29 +185,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
     } on CameraException {
       // Out-of-range on some devices; the slider is already clamped.
     }
-  }
-
-  /// Switches to another physical back camera. On iPhones the ultra-wide is
-  /// the one that focuses close enough for a label held near the lens.
-  Future<void> _switchLens(int index) async {
-    if (index == _lensIndex || _initializing) return;
-    setState(() {
-      _lensIndex = index;
-      _focusPoint = null;
-    });
-    setState(() => _initializeFuture = _initCamera());
-  }
-
-  /// Best-effort friendly name. `CameraDescription` carries no lens-type
-  /// field, so this reads the platform's device name where it is descriptive
-  /// and falls back to a positional label where it is not.
-  String _lensLabel(int index) {
-    final name = _backCameras[index].name.toLowerCase();
-    if (name.contains('ultra')) return 'Ultra-wide';
-    if (name.contains('tele')) return 'Tele';
-    if (name.contains('dual') || name.contains('triple')) return 'Auto';
-    if (name.contains('wide')) return 'Wide';
-    return 'Lens ${index + 1}';
   }
 
   Future<void> _focusAt(Offset localPosition, Size previewSize) async {
@@ -358,8 +327,16 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
-            onPressed: () =>
-                Navigator.of(context).pushNamed(AppRoutes.settings),
+            onPressed: () async {
+              await Navigator.of(context).pushNamed(AppRoutes.settings);
+              if (!mounted) return;
+              // The thresholds are applied during inference, so a capture
+              // already under review would otherwise keep showing boxes from
+              // the old values until it was re-shot.
+              await ref
+                  .read(detectionStateProvider.notifier)
+                  .reprocessIfThresholdsChanged();
+            },
           ),
         ],
       ),
@@ -441,13 +418,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
                 ),
               ),
             ),
-            if (_backCameras.length > 1)
-              Positioned(
-                top: 12,
-                left: 0,
-                right: 0,
-                child: SafeArea(bottom: false, child: _buildLensPicker()),
-              ),
             Positioned(
               bottom: 24,
               left: 0,
@@ -467,33 +437,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
           ],
         );
       },
-    );
-  }
-
-  Widget _buildLensPicker() {
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.black54,
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < _backCameras.length; i++)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: ChoiceChip(
-                  label: Text(_lensLabel(i)),
-                  selected: i == _lensIndex,
-                  onSelected: (_) => _switchLens(i),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-          ],
-        ),
-      ),
     );
   }
 

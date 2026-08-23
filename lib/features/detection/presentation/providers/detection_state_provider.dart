@@ -66,11 +66,18 @@ class DetectionNotifier extends StateNotifier<DetectionUiState> {
 
   final Ref _ref;
 
+  /// Thresholds the current result was produced with, so a settings change
+  /// can be detected without re-running inference needlessly.
+  double? _lastConfidence;
+  double? _lastIou;
+
   Future<void> processCapture(Uint8List imageBytes) async {
     state = DetectionUiState(imageBytes: imageBytes, isProcessing: true);
     try {
       final useCase = _ref.read(runDetectionUseCaseProvider);
       final settings = _ref.read(settingsNotifierProvider);
+      _lastConfidence = settings.confidenceThreshold;
+      _lastIou = settings.iouThreshold;
       final frame = await useCase(
         imageBytes,
         confidenceThreshold: settings.confidenceThreshold,
@@ -87,6 +94,27 @@ class DetectionNotifier extends StateNotifier<DetectionUiState> {
     } catch (e) {
       state = state.copyWith(isProcessing: false, error: e.toString());
     }
+  }
+
+  /// Re-runs detection on the capture already under review when the
+  /// confidence or NMS thresholds have changed since it was produced.
+  ///
+  /// The thresholds are applied during inference, so a photo already on
+  /// screen would otherwise keep showing boxes from the old values until the
+  /// user re-shot it. Re-running is cheap enough for a single still and keeps
+  /// both thresholds honest (filtering client-side would only fix
+  /// confidence, not the NMS IoU). The counts re-seed as a result — the set
+  /// of detections genuinely changed, so any manual +/- edits no longer
+  /// describe what is on screen.
+  Future<void> reprocessIfThresholdsChanged() async {
+    final imageBytes = state.imageBytes;
+    if (imageBytes == null || state.isProcessing) return;
+    final settings = _ref.read(settingsNotifierProvider);
+    if (settings.confidenceThreshold == _lastConfidence &&
+        settings.iouThreshold == _lastIou) {
+      return;
+    }
+    await processCapture(imageBytes);
   }
 
   /// Class names from the loaded model, or the bundled fallback if the loader
