@@ -42,6 +42,10 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
   /// True while the Send placeholder is running.
   bool _sending = false;
 
+  /// Whether the counts/confidence tray under a reviewed capture is open.
+  /// Starts shut so the photo gets the full screen.
+  bool _panelOpen = false;
+
   double _zoom = 1.0;
   double _minZoom = 1.0;
   double _maxZoom = 1.0;
@@ -278,6 +282,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
       final bytes = await file.readAsBytes();
       if (!mounted) return;
       _reviewZoom.value = Matrix4.identity();
+      _panelOpen = false;
       await ref.read(detectionStateProvider.notifier).processCapture(bytes);
     } on CameraException catch (e) {
       if (!mounted) return;
@@ -291,6 +296,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
 
   void _retake() {
     _reviewZoom.value = Matrix4.identity();
+    _panelOpen = false;
     ref.read(detectionStateProvider.notifier).reset();
   }
 
@@ -308,6 +314,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
     if (!mounted) return;
     setState(() => _sending = false);
     _reviewZoom.value = Matrix4.identity();
+    _panelOpen = false;
     ref.read(detectionStateProvider.notifier).reset();
   }
 
@@ -468,6 +475,61 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
     );
   }
 
+  /// The always-visible bar between the capture and the action buttons.
+  /// Doubles as the collapsed summary, so the headline total stays on screen
+  /// even when the tray is shut.
+  Widget _buildPanelHandle(DetectionUiState state) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () => setState(() => _panelOpen = !_panelOpen),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '${state.editedTotal} label(s)'
+                '${state.countsEdited ? ' (adjusted)' : ''}',
+                style: theme.textTheme.titleSmall,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Text(
+              _panelOpen ? 'Hide' : 'Adjust',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            Icon(
+              _panelOpen
+                  ? Icons.keyboard_arrow_down
+                  : Icons.keyboard_arrow_up,
+              color: theme.colorScheme.primary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Live drag: store the value only. Inference is far too costly to re-run
+  /// on every tick of the slider.
+  void _onConfidenceChanged(double value) {
+    ref.read(settingsNotifierProvider.notifier).setConfidenceThreshold(value);
+  }
+
+  /// Drag finished — now it is worth re-running detection on the capture
+  /// still under review so the new threshold is reflected immediately.
+  Future<void> _onConfidenceSettled(double value) async {
+    await ref
+        .read(settingsNotifierProvider.notifier)
+        .setConfidenceThreshold(value);
+    if (!mounted) return;
+    await ref
+        .read(detectionStateProvider.notifier)
+        .reprocessIfThresholdsChanged();
+  }
+
   Widget _buildReview(DetectionUiState state) {
     final frame = state.frame;
     final settings = ref.watch(settingsNotifierProvider);
@@ -483,23 +545,26 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         Column(
           children: [
             Expanded(
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: (frame != null && frame.imageHeight > 0)
-                      ? frame.imageWidth / frame.imageHeight
-                      : 1,
-                  // Pinch to zoom, drag to pan, double-tap to reset. The
-                  // boxes are inside the same subtree as the photo, so they
-                  // scale with it; the RepaintBoundary sits below the
-                  // transform, so a future Send still rasterises the
-                  // canonical unzoomed frame.
-                  child: GestureDetector(
-                    onDoubleTap: () =>
-                        _reviewZoom.value = Matrix4.identity(),
-                    child: InteractiveViewer(
-                      transformationController: _reviewZoom,
-                      minScale: 1.0,
-                      maxScale: AppConstants.reviewMaxZoom,
+              // The zoomable viewport is the WHOLE available area, with the
+              // aspect-ratio'd photo centred inside it — not the other way
+              // round. Nesting it the other way clipped zoom/pan to the
+              // photo's own letterboxed column, so the screen's left and
+              // right margins stayed unused no matter how far you zoomed.
+              child: GestureDetector(
+                onDoubleTap: () => _reviewZoom.value = Matrix4.identity(),
+                child: InteractiveViewer(
+                  transformationController: _reviewZoom,
+                  minScale: 1.0,
+                  maxScale: AppConstants.reviewMaxZoom,
+                  child: Center(
+                    child: AspectRatio(
+                      aspectRatio: (frame != null && frame.imageHeight > 0)
+                          ? frame.imageWidth / frame.imageHeight
+                          : 1,
+                      // The boxes live in the same subtree as the photo, so
+                      // they scale with it; the RepaintBoundary sits below
+                      // the transform, so a future Send still rasterises the
+                      // canonical unzoomed frame.
                       child: RepaintBoundary(
                         key: _captureBoundaryKey,
                         child: Stack(
@@ -530,18 +595,30 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
               ),
             ),
             if (state.isProcessing) const LinearProgressIndicator(),
-            if (state.labelCounts.isNotEmpty)
-              ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: panelMaxHeight),
-                child: LabelCountsPanel(
-                  labelCounts: state.labelCounts,
-                  total: state.editedTotal,
-                  edited: state.countsEdited,
-                  frame: frame,
-                  onIncrement: notifier.increment,
-                  onDecrement: notifier.decrement,
-                ),
+            if (state.labelCounts.isNotEmpty) ...[
+              _buildPanelHandle(state),
+              // Collapsed by default so the capture gets the full screen;
+              // the handle above still shows the headline total.
+              AnimatedSize(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                alignment: Alignment.topCenter,
+                child: _panelOpen
+                    ? ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: panelMaxHeight),
+                        child: LabelCountsPanel(
+                          labelCounts: state.labelCounts,
+                          frame: frame,
+                          onIncrement: notifier.increment,
+                          onDecrement: notifier.decrement,
+                          confidence: settings.confidenceThreshold,
+                          onConfidenceChanged: _onConfidenceChanged,
+                          onConfidenceSettled: _onConfidenceSettled,
+                        ),
+                      )
+                    : const SizedBox(width: double.infinity),
               ),
+            ],
             if (state.error != null)
               Padding(
                 padding: const EdgeInsets.all(8.0),

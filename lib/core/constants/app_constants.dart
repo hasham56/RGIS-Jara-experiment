@@ -33,7 +33,7 @@ class AppConstants {
 
   /// How long the Send button shows its progress state before returning to
   /// the camera. Stands in for the real upload, which is not wired up yet.
-  static const Duration sendSimulationDelay = Duration(milliseconds: 1500);
+  static const Duration sendSimulationDelay = Duration(milliseconds: 750);
 
   /// Upper bound for pinch-zoom on a reviewed capture. Enough to inspect a
   /// single shelf label and read which category it was boxed as.
