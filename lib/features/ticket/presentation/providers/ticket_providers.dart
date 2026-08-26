@@ -12,6 +12,10 @@ class TicketNotifier extends StateNotifier<TicketInfo> {
     state = state.copyWith(ticketNumber: value.trim());
   }
 
+  void setCategory(String value) {
+    state = state.copyWith(category: value);
+  }
+
   void clear() {
     state = const TicketInfo();
   }

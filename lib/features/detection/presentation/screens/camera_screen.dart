@@ -301,11 +301,12 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
   }
 
   /// Placeholder for the upload flow: shows a progress state, then returns to
-  /// the camera. Nothing is transmitted yet.
+  /// the ticket form. Nothing is transmitted yet.
   ///
-  /// When implemented this will post the ticket number (`ticketProvider`),
-  /// the user-corrected counts (`DetectionUiState.countsPayload`) and the
-  /// annotated capture, which can be rasterised from [_captureBoundaryKey].
+  /// When implemented this will post the ticket number and category
+  /// (`ticketProvider`), the user-corrected counts
+  /// (`DetectionUiState.countsPayload`) and the annotated capture, which can
+  /// be rasterised from [_captureBoundaryKey].
   Future<void> _send(DetectionFrame frame) async {
     if (_sending) return;
     setState(() => _sending = true);
@@ -316,6 +317,10 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
     _reviewZoom.value = Matrix4.identity();
     _panelOpen = false;
     ref.read(detectionStateProvider.notifier).reset();
+    // Back to the ticket form, which is the first route. Its fields are still
+    // populated — the screen stays alive underneath this one, and it also
+    // re-seeds from `ticketProvider` if it is ever rebuilt.
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   @override

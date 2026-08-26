@@ -5,13 +5,15 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../detection/presentation/providers/detection_providers.dart';
 import '../../../detection/presentation/providers/detection_state_provider.dart';
+import '../../domain/entities/ticket_info.dart';
 import '../providers/ticket_providers.dart';
 
 /// The app's entry screen: collects the scan header before the camera opens.
 ///
-/// More fields are expected here. To add one, add a controller, a
-/// [_LabeledField] row, and a line in [_continue] — plus the matching field
-/// on `TicketInfo` and a setter on `TicketNotifier`.
+/// More fields are expected here. To add one, add a controller (or a piece of
+/// local state), a [_LabeledField] / [_LabeledDropdown] row, and a line in
+/// [_continue] — plus the matching field on [TicketInfo] and a setter on
+/// `TicketNotifier`.
 class TicketFormScreen extends ConsumerStatefulWidget {
   const TicketFormScreen({super.key});
 
@@ -21,14 +23,16 @@ class TicketFormScreen extends ConsumerStatefulWidget {
 
 class _TicketFormScreenState extends ConsumerState<TicketFormScreen> {
   late final TextEditingController _ticketNumber;
+  String? _category;
 
   @override
   void initState() {
     super.initState();
-    // Seeded so returning to the form to fix a typo shows what was entered.
-    _ticketNumber = TextEditingController(
-      text: ref.read(ticketProvider).ticketNumber,
-    );
+    // Seeded from the provider so returning here after a send (or to fix a
+    // typo) shows what was already entered.
+    final ticket = ref.read(ticketProvider);
+    _ticketNumber = TextEditingController(text: ticket.ticketNumber);
+    _category = ticket.category;
   }
 
   @override
@@ -37,10 +41,13 @@ class _TicketFormScreenState extends ConsumerState<TicketFormScreen> {
     super.dispose();
   }
 
-  bool get _canContinue => _ticketNumber.text.trim().isNotEmpty;
+  bool get _canContinue =>
+      _ticketNumber.text.trim().isNotEmpty && _category != null;
 
   void _continue() {
-    ref.read(ticketProvider.notifier).setTicketNumber(_ticketNumber.text);
+    final notifier = ref.read(ticketProvider.notifier);
+    notifier.setTicketNumber(_ticketNumber.text);
+    notifier.setCategory(_category!);
     // The detection state is app-scoped and outlives this screen, so a
     // previous capture would otherwise still be sitting in review when the
     // camera opens for this new ticket.
@@ -50,9 +57,9 @@ class _TicketFormScreenState extends ConsumerState<TicketFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Warm the ONNX session while the user types, so Continue usually lands
-    // on a ready camera instead of a spinner. The result is handled on the
-    // camera screen; watching it here only starts the load early.
+    // Warm the ONNX session while the user fills the form, so Continue
+    // usually lands on a ready camera instead of a spinner. The result is
+    // handled on the camera screen; watching it here only starts the load.
     ref.watch(modelLoaderProvider);
 
     return Scaffold(
@@ -65,11 +72,16 @@ class _TicketFormScreenState extends ConsumerState<TicketFormScreen> {
               label: 'RGIS Ticket Number',
               controller: _ticketNumber,
               keyboardType: TextInputType.text,
-              textInputAction: TextInputAction.done,
+              textInputAction: TextInputAction.next,
               onChanged: (_) => setState(() {}),
-              onSubmitted: (_) {
-                if (_canContinue) _continue();
-              },
+            ),
+            const SizedBox(height: 20),
+            _LabeledDropdown(
+              label: 'Category',
+              value: _category,
+              hint: 'Select a category',
+              options: ticketCategories,
+              onChanged: (value) => setState(() => _category = value),
             ),
 
             // Add further fields here.
@@ -121,6 +133,55 @@ class _LabeledField extends StatelessWidget {
           onChanged: onChanged,
           onSubmitted: onSubmitted,
           decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+      ],
+    );
+  }
+}
+
+/// The dropdown counterpart to [_LabeledField], matching its framing.
+class _LabeledDropdown extends StatelessWidget {
+  const _LabeledDropdown({
+    required this.label,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.hint,
+  });
+
+  final String label;
+  final String? value;
+  final List<String> options;
+  final ValueChanged<String?> onChanged;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        InputDecorator(
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: value,
+              isExpanded: true,
+              hint: hint == null ? null : Text(hint!),
+              items: [
+                for (final option in options)
+                  DropdownMenuItem<String>(
+                    value: option,
+                    child: Text(option),
+                  ),
+              ],
+              onChanged: onChanged,
+            ),
+          ),
         ),
       ],
     );
