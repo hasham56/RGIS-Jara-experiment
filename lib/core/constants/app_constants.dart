@@ -2,7 +2,7 @@
 class AppConstants {
   AppConstants._();
 
-  static const String appName = 'RGIS Detector';
+  static const String appName = 'RGIS v2';
 
   // Model assets. Drop your exported files at these exact paths.
   static const String modelAssetPath = 'assets/models/model.onnx';
