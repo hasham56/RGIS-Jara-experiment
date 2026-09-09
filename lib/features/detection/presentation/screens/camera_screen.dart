@@ -8,14 +8,15 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/router/app_router.dart';
-import '../../../settings/presentation/providers/settings_providers.dart';
-import '../../domain/entities/detection_result.dart';
+import '../../../../core/theme/label_colors.dart';
+import '../../../scan/presentation/providers/scan_session_provider.dart';
 import '../providers/detection_providers.dart';
-import '../providers/detection_state_provider.dart';
 import '../widgets/capture_button.dart';
-import '../widgets/detection_overlay_painter.dart';
-import '../widgets/label_counts_panel.dart';
 
+/// Continuous capture for a scan run: the preview stays up, every tap adds a
+/// photo, and detection happens in the background while the operator keeps
+/// shooting. Counts are reviewed and corrected afterwards, per photo, on the
+/// scan review screen.
 class CameraScreen extends ConsumerStatefulWidget {
   const CameraScreen({super.key});
 
@@ -39,25 +40,13 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
   /// the shutter — `isTakingPicture` does not cover that window.
   bool _capturing = false;
 
-  /// True while the Send placeholder is running.
-  bool _sending = false;
-
-  /// Whether the counts/confidence tray under a reviewed capture is open.
-  /// Starts shut so the photo gets the full screen.
-  bool _panelOpen = false;
-
-  double _zoom = 1.0;
-  double _minZoom = 1.0;
-  double _maxZoom = 1.0;
-
   /// Where the user last tapped to focus, in normalised (0..1) preview
   /// coordinates. Re-applied just before the shutter fires.
   Offset? _focusPoint;
 
-  /// Pan/zoom state for inspecting a reviewed capture.
-  final TransformationController _reviewZoom = TransformationController();
-
-  final GlobalKey _captureBoundaryKey = GlobalKey();
+  double _zoom = 1.0;
+  double _minZoom = 1.0;
+  double _maxZoom = 1.0;
 
   @override
   void initState() {
@@ -79,9 +68,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         });
         return;
       }
-      // Clear any error from a previous attempt so Retry can actually recover
-      // — the old code set `_permissionError` once and never unset it, which
-      // wedged the screen until the app was force-quit.
+      // Clear any error from a previous attempt so Retry can actually recover.
       setState(() {
         _permissionError = null;
         _cameraError = null;
@@ -93,7 +80,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         setState(() => _cameraError = 'No camera available on this device.');
         return;
       }
-
       final rearCamera = cameras.firstWhere(
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
@@ -128,9 +114,9 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
       }
       setState(() => _controller = controller);
     } on CameraException catch (e) {
-      // Previously these were swallowed: the future was handed to a
-      // FutureBuilder that never read its snapshot, so any failure showed as
-      // a spinner that never resolved.
+      // Without this these were swallowed: the future went to a FutureBuilder
+      // that never read its snapshot, so failures showed as a spinner that
+      // never resolved.
       if (mounted) {
         setState(() {
           _cameraError =
@@ -147,9 +133,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
     }
   }
 
-  /// Focus and exposure were never configured at all before, leaving whatever
-  /// the platform defaulted to. Continuous AF metered on the centre is the
-  /// sane default for shelf labels; the preview also supports tap-to-focus.
+  /// Continuous AF metered on the centre, plus tap-to-focus on the preview.
   /// Must be re-applied after every re-initialisation — it does not survive.
   Future<void> _applyFocusDefaults(CameraController controller) async {
     try {
@@ -167,8 +151,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
     try {
       final min = await controller.getMinZoomLevel();
       final max = await controller.getMaxZoomLevel();
-      // Devices can report very large digital-zoom maxima; past a few x the
-      // image is too degraded to detect anything, so cap what we offer.
       _minZoom = min;
       _maxZoom = math.min(max, AppConstants.previewMaxZoom);
       _zoom = _minZoom;
@@ -217,18 +199,16 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
   void didChangeAppLifecycleState(AppLifecycleState appState) {
     // `inactive` fires for transient interruptions on iOS — Control Centre,
     // a notification banner, the app switcher, the permission dialog. Tearing
-    // the camera down for those is why a two-second glance killed the preview,
-    // so only a real background triggers teardown now.
+    // the camera down for those killed the preview for a momentary glance,
+    // so only a real background triggers teardown.
     if (appState == AppLifecycleState.paused ||
         appState == AppLifecycleState.hidden ||
         appState == AppLifecycleState.detached) {
       _teardownCamera();
     } else if (appState == AppLifecycleState.resumed) {
-      // Re-acquire when there is no controller. The previous version guarded
-      // on `_controller != null` at the top of this method while its own
-      // teardown branch nulled the field — making this path unreachable and
-      // leaving the camera dead until the app was force-quit. That was the
-      // "sometimes it doesn't open" bug.
+      // Re-acquire when there is no controller. Guarding on
+      // `_controller != null` here while the teardown branch nulled it made
+      // this path unreachable, leaving the camera dead until force-quit.
       if (_controller == null && !_initializing) {
         setState(() => _initializeFuture = _initCamera());
       }
@@ -248,7 +228,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _reviewZoom.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -264,11 +243,10 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         controller.value.isTakingPicture) {
       return;
     }
-    _capturing = true;
+    setState(() => _capturing = true);
     try {
-      // Trigger AF and let it converge before the shutter. Previously
-      // takePicture() fired the instant the button was tapped, so captures
-      // were taken mid-hunt and came out soft.
+      // Trigger AF and let it converge before the shutter — otherwise the
+      // photo is taken mid-hunt and comes out soft.
       try {
         await controller.setFocusPoint(_focusPoint ?? const Offset(0.5, 0.5));
         await controller.setFocusMode(FocusMode.auto);
@@ -281,74 +259,31 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
       final file = await controller.takePicture();
       final bytes = await file.readAsBytes();
       if (!mounted) return;
-      _reviewZoom.value = Matrix4.identity();
-      _panelOpen = false;
-      await ref.read(detectionStateProvider.notifier).processCapture(bytes);
+      // Hands off to the queue and returns — detection happens in the
+      // background so the operator can keep shooting.
+      await ref.read(scanSessionProvider.notifier).addShot(bytes);
     } on CameraException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Capture failed (${e.code}).')),
       );
     } finally {
-      _capturing = false;
+      if (mounted) setState(() => _capturing = false);
     }
-  }
-
-  void _retake() {
-    _reviewZoom.value = Matrix4.identity();
-    _panelOpen = false;
-    ref.read(detectionStateProvider.notifier).reset();
-  }
-
-  /// Placeholder for the upload flow: shows a progress state, then returns to
-  /// the ticket form. Nothing is transmitted yet.
-  ///
-  /// When implemented this will post the ticket number and category
-  /// (`ticketProvider`), the user-corrected counts
-  /// (`DetectionUiState.countsPayload`) and the annotated capture, which can
-  /// be rasterised from [_captureBoundaryKey].
-  Future<void> _send(DetectionFrame frame) async {
-    if (_sending) return;
-    setState(() => _sending = true);
-    // TODO(rgis): replace this delay with the real upload.
-    await Future<void>.delayed(AppConstants.sendSimulationDelay);
-    if (!mounted) return;
-    setState(() => _sending = false);
-    _reviewZoom.value = Matrix4.identity();
-    _panelOpen = false;
-    ref.read(detectionStateProvider.notifier).reset();
-    // Back to the ticket form, which is the first route. Its fields are still
-    // populated — the screen stays alive underneath this one, and it also
-    // re-seeds from `ticketProvider` if it is ever rebuilt.
-    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   @override
   Widget build(BuildContext context) {
     final modelState = ref.watch(modelLoaderProvider);
-    final detectionState = ref.watch(detectionStateProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('RGIS Detector'),
+        title: const Text('Capture'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.photo_library_outlined),
-            onPressed: () =>
-                Navigator.of(context).pushNamed(AppRoutes.gallery),
-          ),
-          IconButton(
             icon: const Icon(Icons.settings_outlined),
-            onPressed: () async {
-              await Navigator.of(context).pushNamed(AppRoutes.settings);
-              if (!mounted) return;
-              // The thresholds are applied during inference, so a capture
-              // already under review would otherwise keep showing boxes from
-              // the old values until it was re-shot.
-              await ref
-                  .read(detectionStateProvider.notifier)
-                  .reprocessIfThresholdsChanged();
-            },
+            onPressed: () =>
+                Navigator.of(context).pushNamed(AppRoutes.settings),
           ),
         ],
       ),
@@ -363,19 +298,17 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
             ),
           ),
         ),
-        data: (_) => _buildBody(detectionState),
+        data: (_) => _buildBody(),
       ),
     );
   }
 
-  Widget _buildBody(DetectionUiState state) {
+  Widget _buildBody() {
     if (_permissionError != null) {
       return _ErrorPane(
         message: _permissionError!,
         primaryLabel: 'Open app settings',
         onPrimary: openAppSettings,
-        // Coming back from Settings having granted permission used to leave
-        // the screen stuck; Retry gives it a way out.
         onRetry: () => setState(() => _initializeFuture = _initCamera()),
       );
     }
@@ -387,10 +320,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
       );
     }
 
-    if (state.imageBytes != null) {
-      return _buildReview(state);
-    }
-
     return FutureBuilder<void>(
       future: _initializeFuture,
       builder: (context, snapshot) {
@@ -399,11 +328,9 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
           return const Center(child: CircularProgressIndicator());
         }
         // CameraController.value.aspectRatio is always reported in the
-        // sensor's landscape orientation (width > height), regardless of
-        // the device's current orientation. Used as-is in a portrait
-        // layout it produces a short, wide box with large empty gaps above
-        // and below; inverting it in portrait makes the preview fill the
-        // available space correctly.
+        // sensor's landscape orientation (width > height), regardless of the
+        // device's current orientation. Inverting it in portrait makes the
+        // preview fill the available space correctly.
         final isPortrait =
             MediaQuery.of(context).orientation == Orientation.portrait;
         final previewAspectRatio = isPortrait
@@ -431,7 +358,13 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
               ),
             ),
             Positioned(
-              bottom: 24,
+              top: 8,
+              left: 0,
+              right: 0,
+              child: SafeArea(bottom: false, child: _buildRunningTally()),
+            ),
+            Positioned(
+              bottom: 16,
               left: 0,
               right: 0,
               child: SafeArea(
@@ -440,8 +373,8 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (_maxZoom > _minZoom) _buildZoomSlider(),
-                    const SizedBox(height: 12),
-                    CaptureButton(onPressed: _capture),
+                    const SizedBox(height: 8),
+                    _buildShutterRow(),
                   ],
                 ),
               ),
@@ -449,6 +382,104 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
           ],
         );
       },
+    );
+  }
+
+  /// Running per-class totals across every photo taken so far, plus how many
+  /// are still being processed.
+  Widget _buildRunningTally() {
+    final session = ref.watch(scanSessionProvider);
+    if (session.shotCount == 0) {
+      return const _TallyCard(
+        child: Text(
+          'Tap the shutter for each shelf section',
+          style: TextStyle(color: Colors.white),
+        ),
+      );
+    }
+
+    return _TallyCard(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final row in session.globalCounts) ...[
+                _ClassPill(classId: row.classId, count: row.count),
+                const SizedBox(width: 6),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${session.shotCount} photo(s) · ${session.globalTotal} labels',
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+              ),
+              if (session.outstanding > 0) ...[
+                const SizedBox(width: 8),
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'processing ${session.outstanding}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShutterRow() {
+    final session = ref.watch(scanSessionProvider);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        const SizedBox(width: 72),
+        CaptureButton(onPressed: _capture),
+        SizedBox(
+          width: 72,
+          child: session.shotCount == 0
+              ? const SizedBox.shrink()
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FilledButton(
+                      onPressed: () => Navigator.of(context)
+                          .pushNamed(AppRoutes.scanReview),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
+                      child: const Text('Review'),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${session.shotCount}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+      ],
     );
   }
 
@@ -479,214 +510,51 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
       ),
     );
   }
+}
 
-  /// The always-visible bar between the capture and the action buttons.
-  /// Doubles as the collapsed summary, so the headline total stays on screen
-  /// even when the tray is shut.
-  Widget _buildPanelHandle(DetectionUiState state) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: () => setState(() => _panelOpen = !_panelOpen),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                '${state.editedTotal} label(s)'
-                '${state.countsEdited ? ' (adjusted)' : ''}',
-                style: theme.textTheme.titleSmall,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            Text(
-              _panelOpen ? 'Hide' : 'Adjust',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: theme.colorScheme.primary,
-              ),
-            ),
-            Icon(
-              _panelOpen
-                  ? Icons.keyboard_arrow_down
-                  : Icons.keyboard_arrow_up,
-              color: theme.colorScheme.primary,
-            ),
-          ],
+/// Dark rounded container used for the overlays on top of the preview.
+class _TallyCard extends StatelessWidget {
+  const _TallyCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(12),
         ),
+        child: child,
       ),
-    );
-  }
-
-  /// Live drag: store the value only. Inference is far too costly to re-run
-  /// on every tick of the slider.
-  void _onConfidenceChanged(double value) {
-    ref.read(settingsNotifierProvider.notifier).setConfidenceThreshold(value);
-  }
-
-  /// Drag finished — now it is worth re-running detection on the capture
-  /// still under review so the new threshold is reflected immediately.
-  Future<void> _onConfidenceSettled(double value) async {
-    await ref
-        .read(settingsNotifierProvider.notifier)
-        .setConfidenceThreshold(value);
-    if (!mounted) return;
-    await ref
-        .read(detectionStateProvider.notifier)
-        .reprocessIfThresholdsChanged();
-  }
-
-  Widget _buildReview(DetectionUiState state) {
-    final frame = state.frame;
-    final settings = ref.watch(settingsNotifierProvider);
-    final notifier = ref.read(detectionStateProvider.notifier);
-    // Bound the panel so four rows plus the button bar cannot push the image
-    // off-screen at large text scales; it scrolls internally past that.
-    final panelMaxHeight = (MediaQuery.sizeOf(context).height * 0.42)
-        .clamp(140.0, 340.0)
-        .toDouble();
-
-    return Stack(
-      children: [
-        Column(
-          children: [
-            Expanded(
-              // The zoomable viewport is the WHOLE available area, with the
-              // aspect-ratio'd photo centred inside it — not the other way
-              // round. Nesting it the other way clipped zoom/pan to the
-              // photo's own letterboxed column, so the screen's left and
-              // right margins stayed unused no matter how far you zoomed.
-              child: GestureDetector(
-                onDoubleTap: () => _reviewZoom.value = Matrix4.identity(),
-                child: InteractiveViewer(
-                  transformationController: _reviewZoom,
-                  minScale: 1.0,
-                  maxScale: AppConstants.reviewMaxZoom,
-                  child: Center(
-                    child: AspectRatio(
-                      aspectRatio: (frame != null && frame.imageHeight > 0)
-                          ? frame.imageWidth / frame.imageHeight
-                          : 1,
-                      // The boxes live in the same subtree as the photo, so
-                      // they scale with it; the RepaintBoundary sits below
-                      // the transform, so a future Send still rasterises the
-                      // canonical unzoomed frame.
-                      child: RepaintBoundary(
-                        key: _captureBoundaryKey,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Image.memory(
-                              state.imageBytes!,
-                              fit: BoxFit.contain,
-                              // Keep detail crisp when magnified rather than
-                              // smoothing the label text away.
-                              filterQuality: FilterQuality.medium,
-                            ),
-                            if (frame != null)
-                              CustomPaint(
-                                painter: DetectionOverlayPainter(
-                                  frame: frame,
-                                  showLabels: settings.showLabels,
-                                  minimizeLabels: settings.minimizeLabels,
-                                  showConfidence: settings.showConfidence,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            if (state.isProcessing) const LinearProgressIndicator(),
-            if (state.labelCounts.isNotEmpty) ...[
-              _buildPanelHandle(state),
-              // Collapsed by default so the capture gets the full screen;
-              // the handle above still shows the headline total.
-              AnimatedSize(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
-                alignment: Alignment.topCenter,
-                child: _panelOpen
-                    ? ConstrainedBox(
-                        constraints: BoxConstraints(maxHeight: panelMaxHeight),
-                        child: LabelCountsPanel(
-                          labelCounts: state.labelCounts,
-                          frame: frame,
-                          onIncrement: notifier.increment,
-                          onDecrement: notifier.decrement,
-                          confidence: settings.confidenceThreshold,
-                          onConfidenceChanged: _onConfidenceChanged,
-                          onConfidenceSettled: _onConfidenceSettled,
-                        ),
-                      )
-                    : const SizedBox(width: double.infinity),
-              ),
-            ],
-            if (state.error != null)
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Text(
-                  state.error!,
-                  style: const TextStyle(color: Colors.red),
-                ),
-              ),
-            SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _sending ? null : _retake,
-                        child: const Text('Retake'),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: (frame == null || _sending)
-                            ? null
-                            : () => _send(frame),
-                        child: const Text('Send'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-        if (_sending)
-          const Positioned.fill(child: _SendingOverlay()),
-      ],
     );
   }
 }
 
-/// Blocking progress state shown while Send runs.
-class _SendingOverlay extends StatelessWidget {
-  const _SendingOverlay();
+/// `S 12` in the class's own colour, matching the boxes drawn on review.
+class _ClassPill extends StatelessWidget {
+  const _ClassPill({required this.classId, required this.count});
+
+  final int classId;
+  final int count;
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: Colors.black54,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(color: Colors.white),
-            const SizedBox(height: 16),
-            Text(
-              'Sending…',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: Colors.white,
-              ),
-            ),
-          ],
+    final color = LabelColors.forClassId(classId);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color, width: 1.5),
+      ),
+      child: Text(
+        '$count',
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../detection/presentation/providers/detection_providers.dart';
-import '../../../detection/presentation/providers/detection_state_provider.dart';
+import '../../../scan/presentation/providers/scan_session_provider.dart';
 import '../../domain/entities/ticket_info.dart';
 import '../providers/ticket_providers.dart';
 
@@ -23,6 +24,7 @@ class TicketFormScreen extends ConsumerStatefulWidget {
 
 class _TicketFormScreenState extends ConsumerState<TicketFormScreen> {
   late final TextEditingController _ticketNumber;
+  late final TextEditingController _bay;
   String? _category;
 
   @override
@@ -32,26 +34,31 @@ class _TicketFormScreenState extends ConsumerState<TicketFormScreen> {
     // typo) shows what was already entered.
     final ticket = ref.read(ticketProvider);
     _ticketNumber = TextEditingController(text: ticket.ticketNumber);
+    _bay = TextEditingController(text: ticket.bay);
     _category = ticket.category;
   }
 
   @override
   void dispose() {
     _ticketNumber.dispose();
+    _bay.dispose();
     super.dispose();
   }
 
   bool get _canContinue =>
-      _ticketNumber.text.trim().isNotEmpty && _category != null;
+      _ticketNumber.text.trim().isNotEmpty &&
+      _bay.text.trim().isNotEmpty &&
+      _category != null;
 
   void _continue() {
     final notifier = ref.read(ticketProvider.notifier);
     notifier.setTicketNumber(_ticketNumber.text);
+    notifier.setBay(_bay.text);
     notifier.setCategory(_category!);
-    // The detection state is app-scoped and outlives this screen, so a
-    // previous capture would otherwise still be sitting in review when the
-    // camera opens for this new ticket.
-    ref.read(detectionStateProvider.notifier).reset();
+    // The scan session is app-scoped and outlives this screen, so the
+    // previous bay's photos would otherwise still be in the run. This also
+    // deletes those photos from disk.
+    ref.read(scanSessionProvider.notifier).reset();
     Navigator.of(context).pushNamed(AppRoutes.camera);
   }
 
@@ -73,6 +80,17 @@ class _TicketFormScreenState extends ConsumerState<TicketFormScreen> {
               controller: _ticketNumber,
               keyboardType: TextInputType.text,
               textInputAction: TextInputAction.next,
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 20),
+            _LabeledField(
+              label: 'Bay',
+              controller: _bay,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
+              // Digits only — the numeric keyboard alone does not prevent a
+              // pasted or hardware-keyboard non-digit.
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 20),
@@ -108,6 +126,7 @@ class _LabeledField extends StatelessWidget {
     required this.controller,
     this.keyboardType,
     this.textInputAction,
+    this.inputFormatters,
     this.onChanged,
     this.onSubmitted,
   });
@@ -116,6 +135,7 @@ class _LabeledField extends StatelessWidget {
   final TextEditingController controller;
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
+  final List<TextInputFormatter>? inputFormatters;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
@@ -130,6 +150,7 @@ class _LabeledField extends StatelessWidget {
           controller: controller,
           keyboardType: keyboardType,
           textInputAction: textInputAction,
+          inputFormatters: inputFormatters,
           onChanged: onChanged,
           onSubmitted: onSubmitted,
           decoration: const InputDecoration(border: OutlineInputBorder()),

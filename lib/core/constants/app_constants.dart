@@ -43,6 +43,11 @@ class AppConstants {
   /// higher (digital) maxima that are useless for label detection.
   static const double previewMaxZoom = 8.0;
 
+  /// Where a scan run's photos are held while it is in progress. Kept out of
+  /// the gallery's own directory so clearing a run cannot touch saved
+  /// captures.
+  static const String scanShotsDirName = 'scan_shots';
+
   static const String capturesDirName = 'captures';
   static const String capturesIndexFileName = 'captures_index.json';
 
